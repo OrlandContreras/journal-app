@@ -2,7 +2,7 @@ use chrono::{serde::ts_seconds, DateTime, Local, Utc};
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs::{File, OpenOptions};
-use std::io::{Result, Seek, SeekFrom};
+use std::io::{Error, ErrorKind, Result, Seek, SeekFrom};
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -28,19 +28,45 @@ impl Task {
             .open(journal_path)?;
 
         // Consume the file's contents as a vector of tasks.
-        let mut tasks: Vec<Task> = match serde_json::from_reader(&file) {
-            OK(tasks) => tasks,
-            Err(e) if e.is_eof() => Vec::new(),
-            Err(e) => Err(e)?,
-        };
-
-        // Rewind the file after reading from it.
-        file.seek(SeekFrom::Start(0))?;
-
+        let mut tasks = collect_tasks(&file)?;
+        
         // Write the modified task list back into the file.
         tasks.push(task);
         serde_json::to_writer(file, &tasks)?;
 
         Ok(())
+    }
+
+    pub fn complete_task(journal_path: PathBuf, task_position: usize) -> Result<()> {
+        // Open the file
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(journal_path)?;
+
+        // Consume the file's contents as a vector of tasks.
+        let mut tasks =  collect_tasks(&file)?;    
+
+        // Try to remove the task.
+        if task_position == 0 || task_position > tasks.len() {
+            return Err(Error::new(ErrorKind::InvalidInput, "Invalid Task ID"));
+        }
+        tasks.remove(task_position - 1);
+        
+        // Write the modified task list back into the file.
+        file.set_len(0);
+        serde_json::to_writer(file, &tasks)?;
+        Ok(())
+    }
+
+    fn collect_tasks(mut file: &File) -> Result<Vec<Task>> {
+        file.seek(SeekFrom::Start(0))?;
+        let tasks = match serde_json::from_reader(file) {
+            Ok(tasks) => tasks,
+            Err(e) if e.is_eof() => Vec::new(),
+            Err(e) => Err(e)?,
+        };
+        file.seek(SeekFrom::Start(0))?;
+        Ok(tasks)
     }
 }
